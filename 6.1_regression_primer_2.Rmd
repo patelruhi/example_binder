@@ -1,0 +1,170 @@
+---
+title: "Tidymodels Regression"
+output: html_notebook
+---
+
+# tidymodels - use this framework
+provides a nice clean framework for building different model types. We'll focus on regression here but realize it can do supervised, unsupervised, classification and other tasks as well. 
+
+## Libraries 
+we need two new libraries 
+
+tidymodels - model building framework
+vip - variable importance 
+
+but good to have lubridate, skimr and tidyverse
+
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(lubridate)
+library(skimr)
+library(vip)
+```
+
+
+## Data
+```{r}
+wake <- read_csv("data/wake_county.csv")
+
+head(wake)
+```
+```{r}
+wake %>% 
+  skim_without_charts()
+```
+
+
+```{r}
+wake <- wake %>%
+  mutate(zip_code = factor(zip_code)) %>%
+  mutate(across(is.character, factor))
+```
+
+
+```{r}
+library(recipes)
+library(rsample)
+library(modeldata)
+
+set.seed(42)
+train_test_split <- initial_split(wake)
+
+train <- training(train_test_split)
+test <- testing(train_test_split)
+```
+
+
+
+# Intial Recipe 
+
+Formula is simply target ~ var1 + var2 ... varN or target ~ . all the varaibles 
+
+update_role: ignore variables 
+step_mode/median/mean impute: deal with missing values 
+step novel - 	deal with New/Novel factor levels 
+step center - make numbers to have a mean of 0 
+step scale  - make numbers to have a sd of 1 
+step_zv() - Zero Variance Filter
+step_dummy - make 0/1 of factor levels 
+
+
+
+
+```{r}
+rec_obj <- recipe(sale_price ~ ., data = train) %>%
+  update_role(pin_num,owner, site_address, city_state_zip, new_role = "id variable") %>% 
+  step_modeimpute(zip_code) %>%
+  step_meanimpute(heatedarea) %>%
+  step_mutate(home_age = 2021 - year_built, 
+              sale_age = 2021 - year(sale_date)) %>%
+  update_role(year_built,sale_date, new_role = "date variables" ) %>%
+  step_novel(all_nominal())  %>%
+  step_center(all_numeric(), -all_outcomes()) %>%
+  step_scale(all_numeric(), -all_outcomes()) %>%
+  step_dummy(zip_code,city) 
+  
+rec_obj
+```
+
+## Bake your recipe 
+```{r}
+bake_train <- bake(rec_obj %>% prep(), train)
+bake_test  <- bake(rec_obj %>% prep(), test)
+```
+
+## Model Spec 
+
+```{r}
+model_obj <- linear_reg() %>%
+  set_mode("regression") %>%
+  set_engine("lm")
+
+```
+
+## Workflow
+
+```{r}
+workflow_spec <- workflow() %>%
+  add_recipe(rec_obj) %>%
+  add_model(model_obj) 
+
+workflow_fit <- workflow_spec %>%
+  fit(data= train)
+```
+
+
+## Inspect workflow 
+```{r}
+workflow_fit$fit
+```
+
+```{r}
+tidy(pull_workflow_fit(workflow_fit) )%>%
+  mutate(across(is.numeric,round,3))
+```
+
+## Metrics
+
+```{r}
+
+bind_cols(predict(workflow_fit, train), train) %>%
+  mutate(part = "train") -> train_predict 
+
+bind_cols(predict(workflow_fit, test), test) %>%
+  mutate(part = "test") -> test_predict 
+
+bind_rows(train_predict, test_predict) %>%
+  group_by(part) %>%
+  metrics(truth = sale_price, estimate = .pred) %>%
+  mutate(.estimate = round(.estimate,3)) %>%
+  pivot_wider(id=part, names_from = .metric, values_from=.estimate)
+
+```
+
+
+
+## Variable Importance 
+```{r}
+vip(pull_workflow_fit(workflow_fit))
+```
+
+## Predictions 
+
+Top n, right vs wrong 
+
+```{r}
+test_predict %>%
+  mutate(res = sale_price - .pred) %>%
+  slice_max(abs(res),n=10)
+
+test_predict %>%
+  mutate(res = sale_price - .pred) %>%
+  slice_min(abs(res),n=10)
+```
+
+
+
+
+
