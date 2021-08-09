@@ -1,0 +1,6 @@
+install.packages("tidyverse")
+install.packages("tidymodels")
+install.packages("janitor")
+install.packages("skimr")
+install.packages('vip')
+install.packages("lubridate")
